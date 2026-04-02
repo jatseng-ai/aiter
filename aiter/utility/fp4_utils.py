@@ -648,7 +648,8 @@ def moe_mxfp4_sort(
         blockscale_e8m0 = blockscale_e8m0.view(-1, blockscale_e8m0.shape[-1])
     M_i, N_i = blockscale_e8m0.shape
     M_o, N_o = sorted_ids.shape[0], N_i
-    assert (N_i // 2) % 2 == 0
+    # (N_i // 2) % 2 == 0 assertion removed: the kernel handles non-aligned
+    # scaleN (e.g. N_i=6 at TP=8) through load masking and output slicing.
     assert block_size % BLOCK_SIZE_M == 0
 
     blockscale_e8m0_sorted = torch.empty(
@@ -693,5 +694,11 @@ def moe_mxfp4_sort(
         grid = (triton.cdiv(M_o, BLOCK_SIZE_M), triton.cdiv(N_i, BLOCK_SIZE_N))
         _moe_mxfp4_sort_kernel[grid](*common_args, **common_kwargs)
 
-    # Reshape the output to the final shape
-    return blockscale_e8m0_sorted.view(dtypes.fp8_e8m0).view(-1, N_o)
+    # The sort kernel stores data in BLOCK_SIZE_N=8-wide blocks.  Reshape via
+    # the block-aligned column count, then slice back to the actual N_o so the
+    # CK tile GEMM kernel sees the correct scale stride (K/32 columns).
+    N_o_aligned = triton.cdiv(N_o, BLOCK_SIZE_N) * BLOCK_SIZE_N
+    scale_out = blockscale_e8m0_sorted.view(dtypes.fp8_e8m0).view(-1, N_o_aligned)
+    if N_o_aligned != N_o:
+        scale_out = scale_out[:, :N_o].contiguous()
+    return scale_out
