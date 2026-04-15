@@ -399,7 +399,7 @@ def mla_decode_fwd(
         )
 
         use_hk = (
-            nhead == 128
+            nhead * max_seqlen_q == 128
             and q.dtype == dtypes.fp8
             and kv_buffer.dtype == dtypes.fp8
             and page_size == 1

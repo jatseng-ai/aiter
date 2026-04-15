@@ -10,10 +10,9 @@
 #include <ATen/hip/impl/HIPGuardImplMasqueradingAsCUDA.h>
 #include <torch/python.h>
 
-template <typename q_t_, typename kv_t_, typename out_t_, int32_t kQoNumHead_>
+template <typename q_t_, typename kv_t_, typename out_t_>
 struct HkMlaDecodeFwdTraits
 {
-    static constexpr int32_t kQoNumHead     = kQoNumHead_;
     static constexpr int32_t kKvNumHead     = 1;
     static constexpr int32_t kKvLoraRank    = 512;
     static constexpr int32_t kQkNopeHeadDim = kKvLoraRank;
@@ -33,8 +32,6 @@ struct HkMlaDecodeFwdTraits
                                                  // 1: round to nearest away.
                                                  // 2: round to zero
 
-    static_assert(kBlockM == kQoNumHead, "Only supports nhead=128!");
-
     // base types
     using q_t   = q_t_;
     using kv_t  = kv_t_;
@@ -44,9 +41,9 @@ struct HkMlaDecodeFwdTraits
                                                                   // #warp, 576]
     using gl_kv =
         hk::gl<kv_t, -1, kPageSize, kKvNumHead, kQkHeadDim>; // [#page, page_size, #head_kv, 576]
-    using gl_o    = hk::gl<out_t, 1, -1, kQoNumHead, kVoHeadDim>; // [1, #batch*#seqlen, #head, 512]
-    using gl_so   = hk::gl<float, 1, -1, kQoNumHead, kVoHeadDim>; // [1, #partial_slots, #head, 512]
-    using gl_slse = hk::gl<float, 1, -1, kQoNumHead, 1>;          // [1, #partial_slots, #head, 1]
+    using gl_o    = hk::gl<out_t, 1, -1, kBlockM, kVoHeadDim>; // [1, #batch*#seqlen, #nhead*#qseqlen, 512]
+    using gl_so   = hk::gl<float, 1, -1, kBlockM, kVoHeadDim>; // [1, #partial_slots, #nhead*#qseqlen, 512]
+    using gl_slse = hk::gl<float, 1, -1, kBlockM, 1>;          // [1, #partial_slots, #nhead*#qseqlen, 1]
     // lds tiles
     static_assert(std::is_same_v<kv_t, hk::bf16> || std::is_same_v<kv_t, hk::fp8e4m3>);
     using st_kv_nope = std::conditional_t<std::is_same_v<kv_t, hk::fp8e4m3>,
@@ -76,6 +73,7 @@ struct HkMlaDecodeFwdParams
 
     // parameters
     const float softmax_scale;
+    const int32_t log2_num_qheads; // __builtin_ctz(num_qheads), num_qheads in {16,32,64,128}
 };
 
 enum class PvGemmEpilogueType : uint32_t
@@ -218,6 +216,15 @@ __global__ __launch_bounds__(T::kNumThreads, T::kOccupancy) __attribute__((
     const uint32_t kv_ld_row_base_idx = kv_manager.get_kv_ld_row_base_idx(warp_idx);
     const uint32_t kv_ld_col_base     = kv_manager.get_kv_ld_col_base(warp_idx);
 
+    // Causal mask: compute per-warp kv_end offset for MTP
+    // num_wave_group = qseqlen = kBlockM / num_qheads
+    // waves_per_head = num_qheads / kTileM
+    // causal_offset = num_wave_group - 1 - (warp_idx / waves_per_head)
+    const int32_t log2_num_qheads = __builtin_amdgcn_readfirstlane(params.log2_num_qheads);
+    const int32_t num_wave_group  = T::kBlockM >> log2_num_qheads; // qseqlen
+    const int32_t log2_waves_per_head = log2_num_qheads - 4; // log2(kTileM) = 4
+    const int32_t causal_offset   = num_wave_group - 1 - (warp_idx >> log2_waves_per_head);
+
     const uintptr_t out_as_int       = reinterpret_cast<uintptr_t>(params.final_output.raw_ptr);
     const uint64_t out_as_u64        = static_cast<uint64_t>(out_as_int);
     const hk::buffer_resource out_br = hk::make_buffer_resource(out_as_u64, 0xFFFFFFFF, 0x00020000);
@@ -256,6 +263,7 @@ __global__ __launch_bounds__(T::kNumThreads, T::kOccupancy) __attribute__((
             params.p_work_info_set[work_idx * kSizeMlaWorkInfoInDw + 4]);
         const int32_t kv_end = __builtin_amdgcn_readfirstlane(
             params.p_work_info_set[work_idx * kSizeMlaWorkInfoInDw + 5]);
+        const int32_t kv_end_eff = kv_end - causal_offset; // per-warp effective kv_end
         const int32_t kv_len = kv_end - kv_start;
 
         comp_t row_max;
@@ -597,11 +605,35 @@ __global__ __launch_bounds__(T::kNumThreads, T::kOccupancy) __attribute__((
                 {
                     constexpr comp_t inv_log2e = 1.0 / log2e;
                     const uint32_t row_idx =
-                        lane_idx % 16 + warp_idx * 16 + partial_qo_loc * T::kQoNumHead;
+                        lane_idx % 16 + warp_idx * 16 + partial_qo_loc * T::kBlockM;
                     const comp_t lse = row_max + __builtin_amdgcn_logf(row_sum_e) * inv_log2e;
                     params.split_lse.raw_ptr[row_idx] = lse;
                 }
             }
+        };
+
+        // mla_dummy: cooperative-only path for idle warps (causal masking).
+        // Only called on the global last tile (causal_offset < kBlockN guarantees
+        // at most one idle tile per warp). Participates in barriers and V transpose
+        // so active warps can complete their PV GEMM.
+        auto mla_dummy = [&]() {
+            // Barrier #1: sync before reading current KV tile from LDS
+            __builtin_amdgcn_s_waitcnt(0);
+            __builtin_amdgcn_s_barrier();
+            __builtin_amdgcn_sched_barrier(0);
+
+            // Load and transpose V (cooperative -- active warps read our portion)
+            v8ui v;
+            kv_manager.load_v_to_gpr(&v, warp_idx, p_lds_kv_curr);
+
+            asm volatile("s_waitcnt lgkmcnt(0)");
+            vt_manager.transpose_v(&v);
+            vt_manager.store_transposed_v_to_lds(p_lds_vt, warp_idx, v);
+
+            // Barrier #2: sync so active warps can read transposed V for PV GEMM
+            asm volatile("s_waitcnt lgkmcnt(0)");
+            __builtin_amdgcn_s_barrier();
+            __builtin_amdgcn_sched_barrier(0);
         };
 
         if(kv_len < T::kBlockN)
@@ -707,6 +739,14 @@ void mla_v32_fwd_decode_m16x8_fp8_fp8(torch::Tensor& query,
                                       torch::Tensor& split_lse,
                                       torch::Tensor& final_output)
 {
+    const int32_t num_qheads = query.size(1);
+    TORCH_CHECK((num_qheads & (num_qheads - 1)) == 0 && num_qheads >= 16 && num_qheads <= 128,
+                "num_qheads must be a power of 2 in [16, 128], got ", num_qheads);
+    TORCH_CHECK(num_qheads * max_seqlen_q == Traits::kBlockM,
+                "num_qheads * max_seqlen_q must equal ", Traits::kBlockM,
+                ", got ", num_qheads, " * ", max_seqlen_q, " = ", num_qheads * max_seqlen_q);
+    const int32_t log2_num_qheads = __builtin_ctz(num_qheads);
+
     hipDevice_t dev;
     hipDeviceProp_t dev_prop;
     HIP_CALL(hipGetDevice(&dev));
@@ -736,22 +776,23 @@ void mla_v32_fwd_decode_m16x8_fp8_fp8(torch::Tensor& query,
             static_cast<uint64_t>(reinterpret_cast<uintptr_t>(final_output.data_ptr())),
             1,
             final_output.size(0),
-            Traits::kQoNumHead,
+            Traits::kBlockM,
             Traits::kVoHeadDim),
         hk::make_gl<typename Traits::gl_so>(
             static_cast<uint64_t>(reinterpret_cast<uintptr_t>(split_output.data_ptr())),
             1,
             split_output.size(0),
-            Traits::kQoNumHead,
+            Traits::kBlockM,
             Traits::kVoHeadDim),
         hk::make_gl<typename Traits::gl_slse>(
             static_cast<uint64_t>(reinterpret_cast<uintptr_t>(split_lse.data_ptr())),
             1,
             split_lse.size(0),
-            Traits::kQoNumHead,
+            Traits::kBlockM,
             1),
         // parameters
-        softmax_scale};
+        softmax_scale,
+        log2_num_qheads};
 
     const dim3 grid        = dim3(dev_prop.multiProcessorCount);
     const int32_t lds_size = dev_prop.maxSharedMemoryPerMultiProcessor / Traits::kOccupancy;
@@ -780,12 +821,10 @@ void hk_mi3xx_mla_v32_fwd_decode_m16x8_fp8_fp8(torch::Tensor& query,
                           (query.scalar_type() == at::ScalarType::Float8_e4m3fnuz);
     const bool kv_is_fp8 = (kv_buffer.scalar_type() == at::ScalarType::Float8_e4m3fn) ||
                            (kv_buffer.scalar_type() == at::ScalarType::Float8_e4m3fnuz);
-    const bool q_is_bf16  = (query.scalar_type() == at::ScalarType::BFloat16);
-    const bool kv_is_bf16 = (kv_buffer.scalar_type() == at::ScalarType::BFloat16);
 
     if(q_is_fp8 && kv_is_fp8)
     {
-        using Traits = HkMlaDecodeFwdTraits<hk::fp8e4m3, hk::fp8e4m3, hk::bf16, 128>;
+        using Traits = HkMlaDecodeFwdTraits<hk::fp8e4m3, hk::fp8e4m3, hk::bf16>;
         mla_v32_fwd_decode_m16x8_fp8_fp8<Traits>(query,
                                                  kv_buffer,
                                                  qo_indptr,

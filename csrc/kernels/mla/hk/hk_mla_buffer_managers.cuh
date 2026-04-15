@@ -1244,7 +1244,7 @@ class OManager16bitsV1
         constexpr uint32_t kOffsetInBytes1 = kOffsetInBytes0 + kMfmaCols * sizeof(out_t);
 
         const uint32_t lane_idx     = ckt::get_lane_id();
-        const uint32_t row_idx      = lane_idx % 16 + warp_idx * 16 + qo_start * T::kQoNumHead;
+        const uint32_t row_idx      = lane_idx % 16 + warp_idx * 16 + qo_start * T::kBlockM;
         const uint32_t col_idx_base = (lane_idx / 16) * 4;
         const uint32_t offset       = (row_idx * T::kVoHeadDim + col_idx_base) * sizeof(out_t);
 
@@ -1345,7 +1345,7 @@ class OManager16bitsV2
         const uint32_t col_lds_ld      = (lane_idx % kVramStLanePerRow) * kVramStElemPerLane;
         const uint32_t v_offset_lds_ld = get_v_offset_lds(row_lds_ld, col_lds_ld);
 
-        const uint32_t row_vram_st = row_lds_ld + qo_start * T::kQoNumHead + warp_idx * kNumRows;
+        const uint32_t row_vram_st = row_lds_ld + qo_start * T::kBlockM + warp_idx * kNumRows;
         const uint32_t col_vram_st = col_lds_ld;
         const uint32_t v_offset_vram_st =
             (row_vram_st * T::kVoHeadDim + col_vram_st) * sizeof(out_t);
@@ -1410,7 +1410,7 @@ class OManager32bitsV1
         constexpr uint32_t kOffsetInBytes1 = kOffsetInBytes0 + kMfmaCols * sizeof(out_t);
 
         const uint32_t lane_idx     = ckt::get_lane_id();
-        const uint32_t row_idx      = lane_idx % 16 + warp_idx * 16 + qo_start * T::kQoNumHead;
+        const uint32_t row_idx      = lane_idx % 16 + warp_idx * 16 + qo_start * T::kBlockM;
         const uint32_t col_idx_base = (lane_idx / 16) * 4;
         const uint32_t offset       = (row_idx * T::kVoHeadDim + col_idx_base) * sizeof(out_t);
 
@@ -1511,7 +1511,7 @@ class OManager32bitsV2
         const uint32_t col_lds_ld      = (lane_idx % kVramStLanePerRow) * kVramStElemPerLane;
         const uint32_t v_offset_lds_ld = get_v_offset_lds(row_lds_ld, col_lds_ld);
 
-        const uint32_t row_vram_st = row_lds_ld + qo_start * T::kQoNumHead + warp_idx * kNumRows;
+        const uint32_t row_vram_st = row_lds_ld + qo_start * T::kBlockM + warp_idx * kNumRows;
         const uint32_t col_vram_st = col_lds_ld;
         const uint32_t v_offset_vram_st =
             (row_vram_st * T::kVoHeadDim + col_vram_st) * sizeof(out_t);
