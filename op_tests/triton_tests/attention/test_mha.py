@@ -509,7 +509,6 @@ def test_mha_backward(
 ):
     HAS_DROPOUT = DROPOUT > 0.0
     torch.cuda.empty_cache()
-    torch.manual_seed(20)
 
     if FP8 and not _supports_fp8:
         pytest.skip(f"FP8 not supported on {arch}")
@@ -519,6 +518,7 @@ def test_mha_backward(
         pytest.skip("FP8 does not support dropout")
     if CAUSAL and HAS_DROPOUT:
         pytest.skip("CAUSAL+DROPOUT backward results in NaNs")
+    torch.manual_seed(20)
 
     mha_set_use_fused_bwd_kernel(FUSED)
     q = torch.randn(BATCH, SEQLEN_Q, NUM_Q_HEADS, HEAD_SZ, device="cuda", dtype=dtype)
@@ -601,7 +601,6 @@ def test_mha_backward_varlen(
 ):
     HAS_DROPOUT = DROPOUT > 0.0
     torch.cuda.empty_cache()
-    torch.manual_seed(20)
 
     if FP8 and not _supports_fp8:
         pytest.skip(f"FP8 not supported on {arch}")
@@ -611,6 +610,7 @@ def test_mha_backward_varlen(
         pytest.skip("FP8 does not support dropout")
     if CAUSAL and HAS_DROPOUT:
         pytest.skip("CAUSAL+DROPOUT backward results in NaNs")
+    torch.manual_seed(20)
 
     mha_set_use_fused_bwd_kernel(FUSED)
     q = torch.randn(BATCH, SEQLEN_Q, NUM_Q_HEADS, HEAD_SZ, device="cuda", dtype=dtype)

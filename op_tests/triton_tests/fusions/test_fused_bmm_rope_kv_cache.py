@@ -53,6 +53,7 @@ def test_fused_fp4_bmm_rope_cat_and_cache_mla(
 ):
     if not arch_info.is_fp4_avail():
         pytest.skip("MXFP4 is not available on this device")
+    torch.manual_seed(0)
 
     _, w_k, _, w_k_scale, _ = generate_batched_gemm_a16wfp4_inputs(
         QH_per_KH * KH, T, D_lora, D_q_nope, dtype, layout="TN", output=False
@@ -218,6 +219,7 @@ def test_fused_fp8_bmm_rope_cat_and_cache_mla(
 ):
     if not arch_info.is_fp8_avail():
         pytest.skip("MXFP8 is not available on this device")
+    torch.manual_seed(0)
 
     QH = QH_per_KH * KH
 

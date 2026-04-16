@@ -77,6 +77,7 @@ def input_helper(
     random_seed: int = 0,
 ):
     """Helper function to generate input tensors for paged attention testing."""
+    torch.manual_seed(random_seed)
     torch.cuda.manual_seed(random_seed)
     random.seed(random_seed)
 

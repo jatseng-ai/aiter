@@ -215,6 +215,7 @@ def test_sage(
     layout: str,
     dtype=torch.bfloat16,
 ):
+    torch.manual_seed(20)
     torch.cuda.empty_cache()
 
     softmax_scale = 1.0 / math.sqrt(HEAD_SZ)
@@ -292,6 +293,7 @@ def test_sage_block_sparse_none(
     dtype=torch.bfloat16,
 ):
     """With block_lut=None, output must match non-sparse path (backward compat)."""
+    torch.manual_seed(20)
     torch.cuda.empty_cache()
     softmax_scale = 1.0 / math.sqrt(HEAD_SZ)
     q, k, v = input_helper(
