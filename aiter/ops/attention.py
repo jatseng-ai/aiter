@@ -933,9 +933,16 @@ def get_mla_metadata_info_v1(
         )
     )
 
-    max_qo_tiles_per_batch = (
-        int(math.ceil(max_seqlen_qo * num_head_qo / 128))
-        if num_head_qo == 16
+    effective_seqlen_qo = 1 if is_sparse else max_seqlen_qo
+    if (
+        get_gfx() == "gfx950"
+        and (num_head_qo * effective_seqlen_qo) % 64 == 0
+        and kv_dtype == dtypes.bf16
+        and q_dtype == dtypes.bf16
+    ):
+        max_qo_tiles_per_batch = int(math.ceil(effective_seqlen_qo * num_head_qo / 64))
+    elif (
+        num_head_qo == 16
         or (
             get_gfx() == "gfx942"
             and num_head_qo == 128
@@ -947,11 +954,13 @@ def get_mla_metadata_info_v1(
             and num_head_qo == 64
             and q_dtype == dtypes.fp8
             and kv_dtype == dtypes.fp8
-            and max_seqlen_qo == 1
+            and effective_seqlen_qo == 1
         )
         or use_qseqlen_fold
-        else int(math.ceil(max_seqlen_qo * num_head_qo / 16))
-    )
+    ):
+        max_qo_tiles_per_batch = int(math.ceil(effective_seqlen_qo * num_head_qo / 128))
+    else:
+        max_qo_tiles_per_batch = int(math.ceil(effective_seqlen_qo * num_head_qo / 16))
     batch_size = batch_size * max_seqlen_qo if is_sparse else batch_size
     tile_cnt = batch_size * max_qo_tiles_per_batch
 
@@ -1248,6 +1257,12 @@ def decode_update_mla_metadata_v1(
             and num_heads_per_head_k == 128
             and q_is_fp8
             and kv_is_fp8
+        )
+        or (
+            arch_id == "gfx950"
+            and (num_heads_per_head_k * max_seqlen_qo) % 64 == 0
+            and not q_is_fp8
+            and not kv_is_fp8
         )
     )
     cu_num = work_indptr.shape[0] - 1

@@ -260,12 +260,13 @@ void mla_decode_stage1_asm_fwd(
     int prefill = 0; // decode stage
     int causal = 0;
     int config_max_seqlen_q = max_seqlen_q;
+    int config_gqa_ratio = gqa_ratio;
     int sub_Q = 128; // default value
     
     if(gqa_ratio == 128){
         config_max_seqlen_q = 0;
         sub_Q = 128;
-        if (q_type == "bf16" && kv_type == "bf16"){
+        if (q_type == "bf16" && kv_type == "bf16" && arch_id == "gfx942"){
             ps = 0; // not use ps
         }
     }
@@ -338,9 +339,14 @@ void mla_decode_stage1_asm_fwd(
         }
     }
 
+    if (arch_id == "gfx950" && q_type == "bf16" && kv_type == "bf16" && persistent && (gqa_ratio * max_seqlen_q % 64 == 0)){
+        config_max_seqlen_q = 1;
+        config_gqa_ratio = 64;
+        args.s_Q_Bs = gqa_ratio;
+    }
     int lse_flag = (lse != nullptr) ? 1 : 0;
-    std::string kernelName = get_heuristic_kernel_mla(q_type, kv_type, gqa_ratio, ps, prefill, causal, config_max_seqlen_q, arch_id, config_map, lse_flag);
-    
+    std::string kernelName = get_heuristic_kernel_mla(q_type, kv_type, config_gqa_ratio, ps, prefill, causal, config_max_seqlen_q, arch_id, config_map, lse_flag);
+    // printf("kernelName: %s\n", kernelName.c_str());
     AITER_CHECK(!kernelName.empty(), __func__, ": cannot find suitable kernel");
     
     AiterAsmKernel* impl_ptr = nullptr;
