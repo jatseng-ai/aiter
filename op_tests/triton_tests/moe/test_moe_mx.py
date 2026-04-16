@@ -304,10 +304,10 @@ def test_fused_moe(
     routed_weight: bool,
     swizzle_mx_scale: bool,
 ):
-    torch.cuda.empty_cache()  # Helps avoid hangs in large tests
     if not (arch_info.is_fp4_avail()):
         pytest.skip("MXFP4 not supported on this architecture")
-        pytest.skip("MXFP4 not supported on this architecture")
+
+    torch.cuda.empty_cache()  # Helps avoid hangs in large tests
     torch.manual_seed(20)
 
     (

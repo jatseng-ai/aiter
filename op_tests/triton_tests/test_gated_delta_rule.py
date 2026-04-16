@@ -274,8 +274,8 @@ def test_chunk(
         pytest.skip(
             reason="chunk_gated_delta_rule is not supported on alchemist for D>128"
         )
-    torch.manual_seed(42)
 
+    torch.manual_seed(42)
     q = torch.rand(B, T, H, D, dtype=dtype)
     k = torch.rand(B, T, H, D, dtype=dtype)
     v = torch.rand(B, T, H, D, dtype=dtype)

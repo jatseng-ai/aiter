@@ -185,6 +185,7 @@ def input_helper(
         k_shape = (BATCH, N_CTX_K, HK, D_HEAD)
         v_shape = (BATCH, N_CTX_K, HK, D_HEAD_V)
 
+    torch.manual_seed(20)
     q = torch.randn(q_shape, device="cuda", dtype=dtype)
     k = torch.randn(k_shape, device="cuda", dtype=dtype)
     v = torch.randn(v_shape, device="cuda", dtype=dtype)
@@ -215,7 +216,6 @@ def test_sage(
     layout: str,
     dtype=torch.bfloat16,
 ):
-    torch.manual_seed(20)
     torch.cuda.empty_cache()
 
     softmax_scale = 1.0 / math.sqrt(HEAD_SZ)
@@ -293,7 +293,6 @@ def test_sage_block_sparse_none(
     dtype=torch.bfloat16,
 ):
     """With block_lut=None, output must match non-sparse path (backward compat)."""
-    torch.manual_seed(20)
     torch.cuda.empty_cache()
     softmax_scale = 1.0 / math.sqrt(HEAD_SZ)
     q, k, v = input_helper(

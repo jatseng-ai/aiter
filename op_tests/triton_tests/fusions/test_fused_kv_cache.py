@@ -208,6 +208,7 @@ def test_fused_qk_rope_reshape_and_cache(
     offs: bool,
     dtype: torch.dtype,
 ):
+    torch.manual_seed(0)
     pos = True
     q, k, _, _, freqs, positions, offsets, cos, sin = generate_rope_inputs(
         1,
@@ -576,7 +577,6 @@ def test_fused_qk_rope_reshape_and_cache_gpt_oss_120b_config_value_shuffle_preci
     """Test fused_qk_rope_reshape_and_cache with gpt-oss-120b config; compare 4D vs 5D value_cache for precision.
     Config: head_dim=64, num_attention_heads=64, num_key_value_heads=8.
     """
-    torch.manual_seed(0)
     D = GPT_OSS_120B_HEAD_DIM
     QH = GPT_OSS_120B_NUM_ATTENTION_HEADS
     KH = GPT_OSS_120B_NUM_KV_HEADS
@@ -588,6 +588,7 @@ def test_fused_qk_rope_reshape_and_cache_gpt_oss_120b_config_value_shuffle_preci
     pos = True
     offs = False
 
+    torch.manual_seed(0)
     q, k, _, _, freqs, positions, offsets, cos, sin = generate_rope_inputs(
         1,
         T,
@@ -735,6 +736,7 @@ def test_fused_qk_rope_cosine_cache_llama(
     offs: bool,
     dtype: torch.dtype,
 ):
+    torch.manual_seed(0)
     pos = True
     q, k, _, _, freqs, positions, offsets, cos, sin = generate_rope_inputs(
         1,
